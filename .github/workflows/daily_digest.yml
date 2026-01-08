@@ -1,0 +1,19 @@
+name: Daily Cyber Digest
+on:
+  schedule:
+    - cron: '0 9 * * *' # Runs at 9:00 AM UTC every day
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - run: pip install feedparser google-genai
+      - run: python cyber-reporter.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_SENDER: "highyankee@gmail.com"
+          EMAIL_PASSWORD: ${{ secrets.GOOGLE_APP_PASSWORD }}
+          EMAIL_RECEIVER: "nsiachamis@gmail.com"
