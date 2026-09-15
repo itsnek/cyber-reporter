@@ -1,9 +1,14 @@
-import hashlib, os, smtplib
+import hashlib, os, socket, smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import google.genai as genai
 from google.genai import types
-import datetime, feedparser, smtplib
+import datetime, feedparser
+
+# feedparser has no native timeout param; it fetches over urllib, which
+# respects the default socket timeout. Without this, one unresponsive
+# feed can hang the whole run (and the GitHub Actions job with it).
+socket.setdefaulttimeout(10)
 
 # --- CONFIGURATION ---
 # Add your target sites here (RSS feeds are best)
@@ -14,6 +19,7 @@ RSS_FEEDS = [
     "https://thehackernews.com/rss.xml",
     "https://www.darkreading.com/rss.xml",
     "https://threatpost.com/feed/",
+    "https://cyberscoop.com/feed/",
     # Technical & Research
     "https://research.checkpoint.com/feed/",
     "https://www.schneier.com/blog/atom.xml",
