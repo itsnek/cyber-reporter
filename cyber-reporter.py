@@ -92,13 +92,15 @@ def generate_digest(raw_text):
 
     INSTRUCTIONS:
     1. Group similar stories (e.g. if 3 articles talk about the same ransomware, combine them).
-    2. Pick the Top 5-7 most critical stories.
+    2. Pick the Top 5-10 most critical stories.
     3. Output strictly HTML code (no markdown ```html wrappers).
     4. Format using this structure:
        <h3>1. [Headline]</h3>
        <p><strong>Impact:</strong> [High/Medium/Low based on content]</p>
        <p>[2-3 sentence summary]</p>
        <p><a href="[Link]">Read Source</a></p>
+
+    Note: regarding the https://thehackernews.com/ news, avoid adding a trailing "/" because it breaks the source link.
 
     RAW DATA:
     {raw_text}
@@ -149,7 +151,6 @@ def send_email(content):
     html_content = f"""
     <html>
       <body>
-        <h2>Daily Cybersecurity Briefing</h2>
         {content}
         <br>
         <hr>
