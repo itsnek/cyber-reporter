@@ -11,7 +11,7 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      - run: pip install feedparser==6.0.14 google-genai==2.23.0
+      - run: pip install feedparser==6.0.12 google-genai==2.23.0
       - run: python cyber-reporter.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
