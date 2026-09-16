@@ -20,6 +20,8 @@ RSS_FEEDS = [
     "https://www.darkreading.com/rss.xml",
     "https://threatpost.com/feed/",
     "https://cyberscoop.com/feed/",
+    "https://www.securityweek.com/feed/",
+    "https://www.infosecurity-magazine.com/rss/news/",
     # Technical & Research
     "https://research.checkpoint.com/feed/",
     "https://www.schneier.com/blog/atom.xml",
