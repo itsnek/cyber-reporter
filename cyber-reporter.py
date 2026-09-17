@@ -1,14 +1,19 @@
-import hashlib, os, socket, smtplib
+import calendar, hashlib, os, socket, smtplib, time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import google.genai as genai
-from google.genai import types
+from google.genai import errors as genai_errors
 import datetime, feedparser
 
 # feedparser has no native timeout param; it fetches over urllib, which
 # respects the default socket timeout. Without this, one unresponsive
 # feed can hang the whole run (and the GitHub Actions job with it).
 socket.setdefaulttimeout(10)
+
+# Articles older than this are dropped before they ever reach the model —
+# an LLM instruction alone can't enforce a recency cutoff since it has no
+# ground truth for "now" or an article's real publish date.
+MAX_ARTICLE_AGE_HOURS = 24
 
 # --- CONFIGURATION ---
 # Add your target sites here (RSS feeds are best)
@@ -39,18 +44,11 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER", "nsiachamis@gmail.com")
 # Create a single client object
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-grounding_tool = types.Tool(
-    google_search=types.GoogleSearch()
-)
-
-config = types.GenerateContentConfig(
-    tools=[grounding_tool]
-)
-
 def fetch_and_filter_news():
     print(f"🔄 Scanning {len(RSS_FEEDS)} sources...")
     articles = []
     seen_titles = set() # For deduplication
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_ARTICLE_AGE_HOURS)
 
     for url in RSS_FEEDS:
         try:
@@ -60,8 +58,23 @@ def fetch_and_filter_news():
             if not feed.entries:
                 continue
 
-            # Grab top 2 from each feed to ensure variety
-            for entry in feed.entries[:2]:
+            # Walk newest-first until we have 2 fresh, unseen entries for variety
+            fresh_count = 0
+            for entry in feed.entries:
+                if fresh_count >= 2:
+                    break
+
+                # Skip entries with no usable timestamp — freshness can't be verified
+                published_struct = entry.get('published_parsed') or entry.get('updated_parsed')
+                if not published_struct:
+                    continue
+
+                published_at = datetime.datetime.fromtimestamp(
+                    calendar.timegm(published_struct), tz=datetime.timezone.utc
+                )
+                if published_at < cutoff:
+                    continue
+
                 title = entry.title
 
                 # Deduplication: Create a simple hash of the title
@@ -73,13 +86,20 @@ def fetch_and_filter_news():
                     # Clean up summary (some feeds have HTML in them)
                     summary = getattr(entry, 'summary', '')[:500]
 
-                    articles.append(f"SOURCE: {feed.feed.get('title', 'Unknown')}\nTITLE: {title}\nLINK: {entry.link}\nSUMMARY: {summary}\n")
+                    articles.append(
+                        f"SOURCE: {feed.feed.get('title', 'Unknown')}\n"
+                        f"TITLE: {title}\n"
+                        f"PUBLISHED: {published_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                        f"LINK: {entry.link}\n"
+                        f"SUMMARY: {summary}\n"
+                    )
+                    fresh_count += 1
 
         except Exception as e:
             print(f"⚠️ Error reading {url}: {e}")
             continue
 
-    print(f"✅ Collected {len(articles)} unique articles.")
+    print(f"✅ Collected {len(articles)} unique articles from the last {MAX_ARTICLE_AGE_HOURS}h.")
     return "\n---\n".join(articles)
 
 def generate_digest(raw_text):
@@ -89,8 +109,10 @@ def generate_digest(raw_text):
     print("🧠 Analyzing and Summarizing...")
 
     prompt = f"""
-    You are a Chief Information Security Officer (CISO) assistant. 
-    Review these raw RSS feed entries and create a "Daily Cyber Threat Briefing".
+    You are a Chief Information Security Officer (CISO) assistant.
+    Review these raw RSS feed entries — already filtered to the last {MAX_ARTICLE_AGE_HOURS} hours —
+    and create a "Daily Cyber Threat Briefing" using ONLY the entries below. Do not use
+    outside knowledge or introduce any story not present in the RAW DATA.
 
     INSTRUCTIONS:
     1. Group similar stories (e.g. if 3 articles talk about the same ransomware, combine them).
@@ -108,39 +130,27 @@ def generate_digest(raw_text):
     {raw_text}
     """
 
-    # The 'tools' parameter triggers the live search
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt,
-        config=config,
-    )
+    # Gemini occasionally returns transient 503s under high demand, so retry
+    # with backoff before giving up.
+    max_retries = 3
+    backoff_seconds = 30
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+            )
+            break
+        except genai_errors.ServerError as e:
+            if attempt == max_retries:
+                raise
+            print(f"⚠️ Gemini API unavailable (attempt {attempt}/{max_retries}): {e}. Retrying in {backoff_seconds}s...")
+            time.sleep(backoff_seconds)
+            backoff_seconds *= 2
 
     # Strip markdown if Gemini adds it accidentally
     clean_html = response.text.replace("```html", "").replace("```", "")
     return clean_html
-
-# def summarize_news_with_search():
-#     prompt = """
-#     Perform a Google Search for the "latest cybersecurity news" from the following domains from the last 24 hours:
-#     - "https://krebsonsecurity.com/feed/"
-#     - "https://www.bleepingcomputer.com/feed/"
-#     - "https://thehackernews.com/rss.xml"
-#     - "https://www.infosecurity-magazine.com/"
-#     - "https://www.schneier.com/"
-#     - "https://securityaffairs.com/"
-#     - "https://phrack.org/"
-
-#     Select the top 5 most critical stories total.
-#     Write a summary for each in HTML format with a title, a 2-sentence summary, and the source link.
-#     """
-
-#     # The 'tools' parameter triggers the live search
-#     response = client.models.generate_content(
-#         model='gemini-2.5-flash',
-#         contents=prompt,
-#         config=config,
-#     )
-#     return response.text
 
 def send_email(content):
     print("Sending email...")
@@ -171,12 +181,6 @@ def send_email(content):
         print("Email sent successfully!")
     except Exception as e:
         print(f"Error sending email: {e}")
-
-# if __name__ == "__main__":
-
-#     summary_html = summarize_news_with_search()
-#     print(summary_html)
-#     send_email(summary_html)
 
 if __name__ == "__main__":
     news_data = fetch_and_filter_news()

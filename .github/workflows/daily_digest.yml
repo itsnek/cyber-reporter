@@ -2,7 +2,7 @@ name: Daily Cyber Digest
 on:
   workflow_dispatch:
   schedule:
-    - cron: '7 9 * * *' # Runs at ~9:07 AM UTC every day (avoids the :00 top-of-hour queue, when GitHub's scheduler is most delayed)
+    - cron: '0 4 * * *' # Runs at ~4:00 AM UTC every day (avoids the :00 top-of-hour queue, when GitHub's scheduler is most delayed)
 jobs:
   run-script:
     runs-on: ubuntu-latest
